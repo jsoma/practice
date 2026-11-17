@@ -323,16 +323,16 @@ function markRight() {
   recordResult(progress, q, true);
   e.markedRight = true;
   updateStreak(e, true, Infinity);
+  e.milestone = null;
   // History holds its own copy after a reload, so mark that one too.
   const h = progress.history.findLast(x => x.at === e.at && x.questionId === e.questionId);
   if (h) h.markedRight = true;
   save();
   logEvent('override', {quizId: 'practice', questionId: q.id, family: q.family, type: q.type, difficulty: q.difficulty, questionCount: progress.count, bankVersion: version});
-  render();
+  // A little confetti from the button, then straight on to the next question.
+  burst(document.querySelector('[data-action=mark-right]'), 0.7);
   announce('Marked right');
-  document.querySelector('.card')?.classList.add('glow');
-  burst(document.querySelector('.verdict'), 0.7);
-  document.querySelector('#next')?.focus({preventScroll: true});
+  next();
 }
 
 function next() {
