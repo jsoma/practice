@@ -34,8 +34,16 @@ function save() {
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const rich = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
-const looksLikeCode = t => /[\[\]{}()=]|\n|:\/\/|^(cd|ls|pwd|python|pip|uv|df)\b|^\w+\.\w+/.test(t) && !/\b(the|is|are|and|to|of|it)\b/i.test(t);
-const route = () => location.hash.slice(1) || 'home';
+// Choices that are code get the monospace font. Prose has runs of plain words.
+function looksLikeCode(t) {
+  if (t.includes('\n')) return true;
+  let run = 0, longest = 0;
+  for (const word of t.split(/\s+/)) { run = /^[A-Za-z’'-]+[,.;:]?$/.test(word) ? run + 1 : 0; longest = Math.max(longest, run); }
+  if (longest >= 3) return false;
+  return /^([\[(~.\/]|https?:|(cd|ls|pwd|python|pip|uv|wget|curl)\s|\w+(\.\w+)*\s*(=|\[|\())/.test(t);
+}
+const ROUTES = ['home', 'practice', 'wrong'];
+const route = () => ROUTES.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'home';
 function go(r) { if (location.hash === `#${r}`) render(); else location.hash = r; }
 
 // Seconds on the current question, counting only while it is on screen and the tab is visible.
@@ -69,10 +77,10 @@ function highlight(text, terms) {
   for (const term of terms) {
     const words = normalize(term).split(' ').filter(Boolean).map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     if (!words.length) continue;
-    const re = new RegExp(`(?<![\\p{L}\\p{N}])${words.join('[^\\p{L}\\p{N}]+')}(?![\\p{L}\\p{N}])`, 'giu');
-    for (const m of text.matchAll(re)) ranges.push([m.index, m.index + m[0].length]);
+    const re = new RegExp(`(^|[^\\p{L}\\p{N}])(${words.join('[^\\p{L}\\p{N}]+')})(?![\\p{L}\\p{N}])`, 'giu');
+    for (const m of text.matchAll(re)) { const start = m.index + m[1].length; ranges.push([start, start + m[2].length]); }
   }
-  ranges.sort((a, b) => a[0] - b[0]);
+  ranges.sort((a, b) => a[0] - b[0] || b[1] - a[1]);
   let out = '', pos = 0;
   for (const [start, end] of ranges) {
     if (start < pos) continue;
@@ -92,8 +100,8 @@ function strip(currentFamily = null) {
 
 function statusLine() {
   const s = summary(progress, bank);
-  if (!s.seen) return `${s.total} topics.`;
-  return `Seen ${s.seen} of ${s.total} topics. Right on ${s.right} the last time you saw them.`;
+  if (!s.seen) return `Questions on ${s.total} topics.`;
+  return `${s.seen} of ${s.total} topics seen, ${s.right} right.`;
 }
 
 function context(q) {
@@ -155,18 +163,18 @@ function choices(q, e, draft) {
     else if (e && picked) cls += ' is-wrong';
     return `<label class="${cls}"><input type="radio" name="answer" value="${esc(c.id)}" ${picked ? 'checked' : ''} ${e ? 'disabled' : ''}>
       <span class="key" aria-hidden="true">${'ABCD'[i]}</span>
-      <span class="${looksLikeCode(c.text) ? 'choice-code' : 'choice-text'}">${esc(c.text)}</span></label>`;
+      <span class="${looksLikeCode(c.text) ? 'choice-code' : 'choice-text'}">${esc(c.text)}</span>${cls.includes('is-right') ? '<span class="tag-result">Right answer</span>' : cls.includes('is-wrong') ? '<span class="tag-result">Your answer</span>' : ''}</label>`;
   }).join('')}</fieldset>`;
 }
 
 function feedback(q, e) {
   const groups = q.type === 'short' && !e.skipped
     ? `<ul class="groups">${e.result.matches.map(m => `<li class="${m.term ? 'found' : 'missing'}">${esc(m.label)}${m.term ? `: <mark>${esc(m.term)}</mark>` : ''}</li>`).join('')}</ul>
-       <p class="small muted">Keyword match only. Compare your answer with the one below.</p>`
+       <p class="small muted">Keyword match only.</p>`
     : '';
-  const codeNote = q.type === 'code' && !e.skipped && !e.result.earned ? '<p class="small muted">Code is compared to a list of answers, not run, so other code may also work.</p>' : '';
-  return `<section class="feedback ${outcome(e)}" aria-live="polite">
-    <h2 class="verdict">${verdict(q, e)}</h2>
+  const codeNote = q.type === 'code' && !e.skipped && !e.result.earned ? '<p class="small muted">Other code may also work.</p>' : '';
+  return `<section class="feedback ${outcome(e)}">
+    <h2 class="verdict" tabindex="-1">${verdict(q, e)}</h2>
     ${groups}${codeNote}
     ${q.type === 'mc' ? `<p class="explain">${rich(q.explanation)}</p>` : `<div class="compare">
       <div><h3>Your answer</h3>${answerText(q, e)}</div>
@@ -174,7 +182,6 @@ function feedback(q, e) {
     </div>`}
     <div class="actions">
       <button class="primary" data-action="next" id="next">Next question</button>
-      <a href="#wrong">See wrong answers</a>
     </div>
   </section>`;
 }
@@ -191,7 +198,7 @@ function practicePage() {
     ${strip(q.family)}
     <article class="card">
       ${context(q)}
-      <h1 class="stem">${rich(q.stem)}</h1>
+      <h1 class="stem" id="stem" tabindex="-1">${rich(q.stem)}</h1>
       <form id="answer-form">
         ${input}
         ${e ? '' : `<div class="actions">
@@ -201,7 +208,7 @@ function practicePage() {
         </div>
         <p id="notice" class="small" role="status"></p>`}
       </form>
-      ${c.hint ? `<p class="hint">${rich(q.hint)}</p>` : ''}
+      ${c.hint ? `<p class="hint" id="hint" tabindex="-1">${rich(q.hint)}</p>` : ''}
       ${e ? feedback(q, e) : ''}
     </article>`;
 }
@@ -253,16 +260,20 @@ function record(skipped = false) {
     questionCount: progress.count, retry: repeat, bankVersion: version,
   });
   render();
+  announce(verdict(q, entry));
   document.querySelector('#next')?.focus({preventScroll: true});
   document.querySelector('.feedback')?.scrollIntoView({block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
 }
+
+const announce = text => { const el = document.querySelector('#status'); el.textContent = ''; setTimeout(() => { el.textContent = text; }, 50); };
 
 function next() {
   progress.current = null;
   ensureCurrent();
   render();
   window.scrollTo({top: 0});
-  if (finePointer) document.querySelector('#answer, .choice input')?.focus({preventScroll: true});
+  // Touch devices get the question focused, not the input, so the keyboard doesn't pop up.
+  document.querySelector(finePointer ? '#answer, .choice input' : '#stem')?.focus({preventScroll: true});
 }
 
 function render() {
@@ -270,8 +281,9 @@ function render() {
   const page = r === 'practice' ? practicePage() : r === 'wrong' ? wrongPage() : home();
   if (r === 'practice' && !progress.current.entry) {
     const key = `${progress.current.questionId}:${progress.count}`;
-    if (shown.key !== key) shown = {key, ms: 0, at: Date.now()};
-    else if (shown.at === null && document.visibilityState === 'visible') shown.at = Date.now();
+    const visible = document.visibilityState === 'visible';
+    if (shown.key !== key) shown = {key, ms: 0, at: visible ? Date.now() : null};
+    else if (shown.at === null && visible) shown.at = Date.now();
   } else pauseTimer();
   main.innerHTML = (storageOk ? '' : '<p class="warning">This browser isn’t saving progress. A refresh will lose your answers.</p>') + page;
   const n = currentMisses().length;
@@ -290,10 +302,10 @@ main.addEventListener('click', ev => {
   if (!b) return;
   switch (b.dataset.action) {
     case 'practice': go('practice'); break;
-    case 'ask-reset': document.querySelector('#confirm').hidden = false; break;
+    case 'ask-reset': document.querySelector('#confirm').hidden = false; document.querySelector('#confirm button').focus(); break;
     case 'cancel': document.querySelector('#confirm').hidden = true; break;
-    case 'reset': progress = emptyProgress(); save(); render(); break;
-    case 'hint': progress.current.hint = true; save(); render(); break;
+    case 'reset': progress = emptyProgress(); save(); render(); document.querySelector('[data-action=practice]').focus(); break;
+    case 'hint': progress.current.hint = true; save(); render(); document.querySelector('#hint').focus(); break;
     case 'skip': record(true); break;
     case 'next': next(); break;
   }
@@ -303,11 +315,19 @@ main.addEventListener('click', ev => {
 document.addEventListener('keydown', ev => {
   if (route() !== 'practice' || !progress.current || progress.current.entry) return;
   if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && ev.target.id === 'answer') { ev.preventDefault(); record(); return; }
-  if (currentQuestion().type !== 'mc' || ev.target.tagName === 'TEXTAREA' || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const inChoices = ev.target === document.body || ev.target === main || ev.target.closest?.('.choices, .card');
+  if (currentQuestion().type !== 'mc' || !inChoices || ev.target.tagName === 'TEXTAREA' || ev.metaKey || ev.ctrlKey || ev.altKey) return;
   const radio = document.querySelectorAll('.choice input')['abcd'.indexOf(ev.key.toLowerCase())];
   if (radio) { radio.checked = true; radio.focus(); radio.dispatchEvent(new Event('input', {bubbles: true})); }
 });
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') pauseTimer(); else render(); });
-window.addEventListener('hashchange', () => { render(); window.scrollTo({top: 0}); main.focus({preventScroll: true}); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') pauseTimer();
+  else if (route() === 'practice' && progress.current && !progress.current.entry && shown.at === null) shown.at = Date.now();
+});
+window.addEventListener('hashchange', () => {
+  if (!ROUTES.includes(location.hash.slice(1)) && location.hash) return;
+  render(); window.scrollTo({top: 0}); main.focus({preventScroll: true});
+});
+document.querySelector('.skip').addEventListener('click', ev => { ev.preventDefault(); (document.querySelector('#stem') ?? main).focus(); });
 render();
 logEvent('visit', {bankVersion: version});

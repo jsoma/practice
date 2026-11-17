@@ -48,5 +48,5 @@ test('the page keeps the wrong-answers link',()=>{
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
  assert.doesNotMatch(app+html,/<select|<details/);
- assert.match(app,/See wrong answers/);assert.match(html,/See wrong answers/);
+ assert.match(html,/See wrong answers/);
 });
