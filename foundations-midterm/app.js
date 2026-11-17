@@ -1,5 +1,4 @@
 import {bank, BANK_VERSION} from './questions.js';
-import {LOG_URL} from './config.js';
 import {logEvent} from './log.js';
 import {normalize, shuffle} from './core.js';
 import {checkAnswer} from './quiz.js';
@@ -157,7 +156,6 @@ function home() {
       <p>Reset progress? This clears everything you’ve answered.</p>
       <div class="actions"><button data-action="reset">Reset</button><button class="quiet" data-action="cancel">Cancel</button></div>
     </div>
-    ${LOG_URL ? '<p class="small muted">Answers are recorded anonymously.</p>' : ''}
   </section>`;
 }
 
@@ -353,6 +351,7 @@ function render() {
     if (shown.key !== key) shown = {key, ms: 0, at: visible ? Date.now() : null};
     else if (shown.at === null && visible) shown.at = Date.now();
   } else pauseTimer();
+  document.body.dataset.route = r;
   main.innerHTML = (storageOk ? '' : '<p class="warning">This browser isn’t saving progress. A refresh will lose your answers.</p>') + page;
   const n = currentMisses().length;
   document.querySelector('#wrong-count').textContent = n ? ` (${n})` : '';
