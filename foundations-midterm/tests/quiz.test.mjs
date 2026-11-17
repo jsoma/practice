@@ -44,7 +44,7 @@ test('quiz and submitted answers survive saving and loading',()=>{
  data='broken';assert.equal(loadQuizState(storage).quiz,null);
  assert.equal(saveQuizState({setItem(){throw Error('no storage');}},s),false);
 });
-test('the page has no topic filters and keeps the wrong-answers link',()=>{
+test('the page keeps the wrong-answers link',()=>{
  const app=readFileSync(new URL('../app.js',import.meta.url),'utf8');
  const html=readFileSync(new URL('../index.html',import.meta.url),'utf8');
  assert.doesNotMatch(app+html,/<select|<details/);

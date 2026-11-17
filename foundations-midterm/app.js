@@ -2,38 +2,65 @@ import {BANK_VERSION} from './bank.js';
 import {bank} from './questions.js';
 import {LOG_URL} from './config.js';
 import {logEvent} from './log.js';
-import {normalize} from './core.js';
-import {checkAnswer, buildQuiz, shuffleQuiz, wrongAnswers, loadQuizState, saveQuizState} from './quiz.js';
+import {normalize, shuffle} from './core.js';
+import {checkAnswer} from './quiz.js';
+import {emptyProgress, familiesOf, recordResult, pickNext, summary} from './practice.js';
 
 const main = document.querySelector('main');
-const version = `${BANK_VERSION}-plain-quiz-v5`;
+const version = `${BANK_VERSION}-practice-v1`;
+const STORAGE_KEY = 'foundations-practice-v1';
 const finePointer = matchMedia('(pointer: fine)').matches;
+const byId = new Map(bank.map(q => [q.id, q]));
+const familyNames = [...familiesOf(bank).keys()];
 
 let storage;
 try { storage = localStorage; } catch { storage = {getItem: () => null, setItem() { throw Error('unavailable'); }}; }
-let state = loadQuizState(storage);
 let storageOk = true;
-if (state.quiz?.bankVersion !== version) state.quiz = null;
+let progress = load();
+
+function load() {
+  try {
+    const p = JSON.parse(storage.getItem(STORAGE_KEY));
+    if (p && Number.isInteger(p.count) && p.families && Array.isArray(p.history)) {
+      if (p.current && !byId.has(p.current.questionId)) p.current = null;
+      return p;
+    }
+  } catch {}
+  return emptyProgress();
+}
+function save() {
+  try { storage.setItem(STORAGE_KEY, JSON.stringify(progress)); storageOk = true; } catch { storageOk = false; }
+}
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 const rich = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>');
 const looksLikeCode = t => /[\[\]{}()=]|\n|:\/\/|^(cd|ls|pwd|python|pip|uv|df)\b|^\w+\.\w+/.test(t) && !/\b(the|is|are|and|to|of|it)\b/i.test(t);
-
-function save() { storageOk = saveQuizState(storage, state); }
-function go(route) { if (location.hash === `#${route}`) render(); else location.hash = route; }
-const quizDone = () => state.quiz && state.quiz.index >= state.quiz.questions.length;
-const entries = () => state.quiz ? state.quiz.answers.filter(Boolean) : [];
+const route = () => location.hash.slice(1) || 'home';
+function go(r) { if (location.hash === `#${r}`) render(); else location.hash = r; }
 
 // Seconds on the current question, counting only while it is on screen and the tab is visible.
 let shown = {key: null, ms: 0, at: null};
 const pauseTimer = () => { if (shown.at !== null) { shown.ms += Date.now() - shown.at; shown.at = null; } };
 const timerSeconds = () => Math.round((shown.ms + (shown.at !== null ? Date.now() - shown.at : 0)) / 1000);
 
-function outcome(a) {
-  if (!a) return 'todo';
-  if (a.skipped) return 'skipped';
-  if (a.result.earned === a.result.possible) return 'right';
-  return a.result.earned > 0 ? 'partial' : 'wrong';
+const isRight = result => result.earned === result.possible;
+function outcome(entry) {
+  if (entry.skipped) return 'skipped';
+  if (isRight(entry.result)) return 'right';
+  return entry.result.earned > 0 ? 'partial' : 'wrong';
+}
+
+// Put a question's choices back in the order the student saw them.
+function withChoiceOrder(q, order) {
+  if (!order || !q.choices) return q;
+  return {...q, choices: order.map(id => q.choices.find(x => x.id === id)).filter(Boolean)};
+}
+const currentQuestion = () => withChoiceOrder(byId.get(progress.current.questionId), progress.current.choiceOrder);
+function ensureCurrent() {
+  if (progress.current) return;
+  const q = pickNext(progress, bank);
+  progress.current = {questionId: q.id, draft: '', hint: false, entry: null, choiceOrder: q.choices ? shuffle(q.choices).map(c => c.id) : null};
+  save();
 }
 
 // Wrap each matched keyword in the student's own text with <mark>.
@@ -55,9 +82,18 @@ function highlight(text, terms) {
   return out + esc(text.slice(pos));
 }
 
-function progressStrip(quiz) {
-  return `<div class="strip" aria-hidden="true">${quiz.questions.map((_, i) =>
-    `<span class="${outcome(quiz.answers[i])}${i === quiz.index ? ' current' : ''}"></span>`).join('')}</div>`;
+// One segment per topic, colored by the last answer in that topic.
+function strip(currentFamily = null) {
+  return `<div class="strip" aria-hidden="true">${familyNames.map(name => {
+    const f = progress.families[name];
+    return `<span class="${f ? f.last : 'todo'}${name === currentFamily ? ' current' : ''}"></span>`;
+  }).join('')}</div>`;
+}
+
+function statusLine() {
+  const s = summary(progress, bank);
+  if (!s.seen) return `${s.total} topics.`;
+  return `Seen ${s.seen} of ${s.total} topics. Right on ${s.right} the last time you saw them.`;
 }
 
 function context(q) {
@@ -68,14 +104,14 @@ function context(q) {
   return html;
 }
 
-function answerText(q, a) {
-  if (a.skipped) return '<p class="muted">Skipped</p>';
+function answerText(q, e) {
+  if (e.skipped) return '<p class="muted">Skipped</p>';
   if (q.type === 'mc') {
-    const text = q.choices.find(c => c.id === a.answer)?.text ?? '';
+    const text = q.choices.find(c => c.id === e.answer)?.text ?? '';
     return looksLikeCode(text) ? `<pre class="code"><code>${esc(text)}</code></pre>` : `<p>${esc(text)}</p>`;
   }
-  if (q.type === 'code') return `<pre class="code"><code>${esc(a.answer)}</code></pre>`;
-  return `<p class="typed">${highlight(a.answer, a.result.matches.filter(m => m.term).map(m => m.term))}</p>`;
+  if (q.type === 'code') return `<pre class="code"><code>${esc(e.answer)}</code></pre>`;
+  return `<p class="typed">${highlight(e.answer, e.result.matches.filter(m => m.term).map(m => m.term))}</p>`;
 }
 
 function reference(q) {
@@ -85,170 +121,136 @@ function reference(q) {
   return `${block}<p>${rich(q.explanation)}</p>`;
 }
 
-function verdict(q, a) {
-  if (a.skipped) return 'Skipped';
-  const {earned, possible} = a.result;
+function verdict(q, e) {
+  if (e.skipped) return 'Skipped';
+  const {earned, possible} = e.result;
   if (q.type === 'short') return `Keywords found: ${earned} of ${possible}`;
   if (q.type === 'code') return earned ? 'Matches a listed answer' : 'Doesn’t match a listed answer';
   return earned ? 'Correct' : 'Incorrect';
 }
 
 function home() {
-  const active = state.quiz && !quizDone();
-  const finished = state.quiz && quizDone();
-  const total = buildQuiz(bank, 1).length;
-  let status = `${total} questions, one at a time.`;
-  if (active) status = `You’re on question ${state.quiz.index + 1} of ${state.quiz.questions.length}.`;
-  if (finished) {
-    const right = entries().filter(a => outcome(a) === 'right').length;
-    status = `Last quiz: ${right} of ${state.quiz.questions.length} right.`;
-  }
+  const started = progress.count > 0;
   return `<section class="home">
     <h1>Foundations midterm practice</h1>
-    <p class="lede">${status}</p>
-    ${state.quiz ? progressStrip(state.quiz) : ''}
+    <p class="lede">${statusLine()}</p>
+    ${started ? strip() : ''}
     <div class="actions">
-      <button class="primary" data-action="start">${active ? 'Continue' : 'Start a quiz'}</button>
-      ${active ? '<button class="quiet" data-action="ask-new">Start over</button>' : ''}
-      ${finished ? '<a href="#results">See results</a>' : ''}
+      <button class="primary" data-action="practice">${started ? 'Keep practicing' : 'Start practicing'}</button>
+      ${started ? '<button class="quiet" data-action="ask-reset">Reset progress</button>' : ''}
     </div>
     <div class="confirm" id="confirm" hidden>
-      <p>Start over? Your current quiz will be replaced.</p>
-      <div class="actions"><button data-action="new">Start over</button><button class="quiet" data-action="cancel">Cancel</button></div>
+      <p>Reset progress? This clears everything you’ve answered.</p>
+      <div class="actions"><button data-action="reset">Reset</button><button class="quiet" data-action="cancel">Cancel</button></div>
     </div>
     ${LOG_URL ? '<p class="small muted">Answers are recorded anonymously.</p>' : ''}
   </section>`;
 }
 
-function choices(q, a, draft) {
+function choices(q, e, draft) {
   return `<fieldset class="choices"><legend class="sr">Choices</legend>${q.choices.map((c, i) => {
-    const picked = String(a?.answer ?? draft) === c.id;
+    const picked = String(e?.answer ?? draft) === c.id;
     let cls = 'choice';
-    if (a && c.id === q.answer) cls += ' is-right';
-    else if (a && picked) cls += ' is-wrong';
-    return `<label class="${cls}"><input type="radio" name="answer" value="${esc(c.id)}" ${picked ? 'checked' : ''} ${a ? 'disabled' : ''}>
+    if (e && c.id === q.answer) cls += ' is-right';
+    else if (e && picked) cls += ' is-wrong';
+    return `<label class="${cls}"><input type="radio" name="answer" value="${esc(c.id)}" ${picked ? 'checked' : ''} ${e ? 'disabled' : ''}>
       <span class="key" aria-hidden="true">${'ABCD'[i]}</span>
       <span class="${looksLikeCode(c.text) ? 'choice-code' : 'choice-text'}">${esc(c.text)}</span></label>`;
   }).join('')}</fieldset>`;
 }
 
-function feedback(q, a) {
-  const kind = outcome(a);
-  const groups = q.type === 'short' && !a.skipped
-    ? `<ul class="groups">${a.result.matches.map(m => `<li class="${m.term ? 'found' : 'missing'}">${esc(m.label)}${m.term ? `: <mark>${esc(m.term)}</mark>` : ''}</li>`).join('')}</ul>
+function feedback(q, e) {
+  const groups = q.type === 'short' && !e.skipped
+    ? `<ul class="groups">${e.result.matches.map(m => `<li class="${m.term ? 'found' : 'missing'}">${esc(m.label)}${m.term ? `: <mark>${esc(m.term)}</mark>` : ''}</li>`).join('')}</ul>
        <p class="small muted">Keyword match only. Compare your answer with the one below.</p>`
     : '';
-  const codeNote = q.type === 'code' && !a.skipped && !a.result.earned ? '<p class="small muted">Code is compared to a list of answers, not run, so other code may also work.</p>' : '';
-  const last = state.quiz.index === state.quiz.questions.length - 1;
-  return `<section class="feedback ${kind}" aria-live="polite">
-    <h2 class="verdict">${verdict(q, a)}</h2>
+  const codeNote = q.type === 'code' && !e.skipped && !e.result.earned ? '<p class="small muted">Code is compared to a list of answers, not run, so other code may also work.</p>' : '';
+  return `<section class="feedback ${outcome(e)}" aria-live="polite">
+    <h2 class="verdict">${verdict(q, e)}</h2>
     ${groups}${codeNote}
     ${q.type === 'mc' ? `<p class="explain">${rich(q.explanation)}</p>` : `<div class="compare">
-      <div><h3>Your answer</h3>${answerText(q, a)}</div>
+      <div><h3>Your answer</h3>${answerText(q, e)}</div>
       <div><h3>Answer</h3>${reference(q)}</div>
     </div>`}
     <div class="actions">
-      <button class="primary" data-action="next" id="next">${last ? 'Finish' : 'Next question'}</button>
+      <button class="primary" data-action="next" id="next">Next question</button>
       <a href="#wrong">See wrong answers</a>
     </div>
   </section>`;
 }
 
-function quizPage() {
-  const s = state.quiz;
-  if (!s) return home();
-  if (quizDone()) return results();
-  const q = s.questions[s.index], a = s.answers[s.index];
-  const input = q.type === 'mc' ? choices(q, a, s.draft)
-    : a ? '' : `<label class="sr" for="answer">Your answer</label><textarea id="answer" name="answer" class="${q.type === 'short' ? 'prose' : 'code'}" maxlength="4000" spellcheck="${q.type === 'short'}" autocapitalize="off" aria-keyshortcuts="Control+Enter Meta+Enter">${esc(s.draft)}</textarea>`;
+function practicePage() {
+  ensureCurrent();
+  const c = progress.current, q = currentQuestion(), e = c.entry;
+  const input = q.type === 'mc' ? choices(q, e, c.draft)
+    : e ? '' : `<label class="sr" for="answer">Your answer</label><textarea id="answer" name="answer" class="${q.type === 'short' ? 'prose' : 'code'}" maxlength="4000" spellcheck="${q.type === 'short'}" autocapitalize="off" aria-keyshortcuts="Control+Enter Meta+Enter">${esc(c.draft)}</textarea>`;
   return `<div class="quiz-top">
-      <span>Question ${s.index + 1} of ${s.questions.length}</span>
-      <a href="#home">Pause</a>
+      <span>${progress.count} answered</span>
+      <a href="#home">Done for now</a>
     </div>
-    ${progressStrip(s)}
+    ${strip(q.family)}
     <article class="card">
       ${context(q)}
       <h1 class="stem">${rich(q.stem)}</h1>
       <form id="answer-form">
         ${input}
-        ${a ? '' : `<div class="actions">
-          <button class="primary" type="submit" id="check" ${s.draft.trim() ? '' : 'disabled'}>Check answer</button>
-          <button type="button" class="quiet" data-action="hint" ${s.hint ? 'disabled' : ''}>Hint</button>
+        ${e ? '' : `<div class="actions">
+          <button class="primary" type="submit" id="check" ${c.draft.trim() ? '' : 'disabled'}>Check answer</button>
+          <button type="button" class="quiet" data-action="hint" ${c.hint ? 'disabled' : ''}>Hint</button>
           <button type="button" class="quiet" data-action="skip">Skip</button>
         </div>
         <p id="notice" class="small" role="status"></p>`}
       </form>
-      ${s.hint ? `<p class="hint">${rich(q.hint)}</p>` : ''}
-      ${a ? feedback(q, a) : ''}
+      ${c.hint ? `<p class="hint">${rich(q.hint)}</p>` : ''}
+      ${e ? feedback(q, e) : ''}
     </article>`;
 }
 
-function reviewList(list) {
-  return list.map(a => {
-    const q = a.question, n = state.quiz.answers.indexOf(a) + 1;
-    return `<article class="review ${outcome(a)}">
-      <p class="small muted">Question ${n}</p>
-      ${context(q)}
-      <h2 class="stem">${rich(q.stem)}</h2>
-      <div class="compare">
-        <div><h3>Your answer</h3>${answerText(q, a)}</div>
-        <div><h3>Answer</h3>${reference(q)}</div>
-      </div>
-    </article>`;
-  }).join('');
-}
-
-function results() {
-  const all = entries(), misses = wrongAnswers(all);
-  const right = all.filter(a => outcome(a) === 'right').length;
-  const partial = all.filter(a => outcome(a) === 'partial').length;
-  const skipped = all.filter(a => outcome(a) === 'skipped').length;
-  return `<h1>Results</h1>
-    <p class="score">${right} of ${state.quiz.questions.length} right</p>
-    <p class="muted">${[partial && `${partial} partly right`, skipped && `${skipped} skipped`].filter(Boolean).join(', ')}</p>
-    ${progressStrip(state.quiz)}
-    <div class="actions">
-      ${misses.length ? `<button class="primary" data-action="retry">Retry ${misses.length} wrong answer${misses.length === 1 ? '' : 's'}</button>` : ''}
-      <button data-action="new">Start a new quiz</button>
-    </div>
-    ${misses.length ? `<h2 class="section">Wrong answers</h2>${reviewList(misses)}` : '<p>No wrong answers.</p>'}`;
+// The latest attempt in each topic whose last answer was wrong, newest first.
+function currentMisses() {
+  const latest = new Map();
+  for (const h of progress.history) latest.set(h.family, h);
+  return [...latest.values()]
+    .filter(h => progress.families[h.family]?.last === 'wrong' && byId.has(h.questionId))
+    .reverse();
 }
 
 function wrongPage() {
-  const misses = wrongAnswers(entries());
-  const back = state.quiz ? `<a href="#quiz">${quizDone() ? 'Back to results' : 'Back to the quiz'}</a>` : '<a href="#home">Home</a>';
-  return `<h1>Wrong answers so far</h1>
-    <div class="actions">${back}${misses.length ? '<button data-action="ask-retry">Retry these</button>' : ''}</div>
-    <div class="confirm" id="confirm" hidden>
-      <p>Retry these ${misses.length}? Your current quiz will be replaced.</p>
-      <div class="actions"><button data-action="retry">Retry</button><button class="quiet" data-action="cancel">Cancel</button></div>
-    </div>
-    ${misses.length ? reviewList(misses) : '<p class="muted">Nothing wrong yet.</p>'}`;
-}
-
-function start(questions = null) {
-  const retry = !!questions;
-  state.quiz = {id: crypto.randomUUID(), bankVersion: version, questions: questions ? shuffleQuiz(questions) : buildQuiz(bank), answers: [], index: 0, draft: '', hint: false};
-  save();
-  logEvent('start', {quizId: state.quiz.id, retry, questionCount: state.quiz.questions.length, bankVersion: version});
-  go('quiz');
+  const misses = currentMisses();
+  return `<h1>Wrong answers</h1>
+    <div class="actions"><a href="#practice">Back to practice</a></div>
+    ${misses.length ? misses.map(h => {
+      const q = withChoiceOrder(byId.get(h.questionId), h.choiceOrder);
+      return `<article class="review ${outcome(h)}">
+        ${context(q)}
+        <h2 class="stem">${rich(q.stem)}</h2>
+        <div class="compare">
+          <div><h3>Your answer</h3>${answerText(q, h)}</div>
+          <div><h3>Answer</h3>${reference(q)}</div>
+        </div>
+      </article>`;
+    }).join('') : '<p class="muted">Nothing wrong right now.</p>'}`;
 }
 
 function record(skipped = false) {
-  const s = state.quiz, q = s.questions[s.index];
-  if (s.answers[s.index]) return;
+  const c = progress.current, q = currentQuestion();
+  if (c.entry) return;
   const result = skipped
     ? {kind: q.type === 'mc' ? 'choice' : q.type === 'code' ? 'code' : 'keywords', earned: 0, possible: q.type === 'short' ? q.groups.length : 1, matches: []}
-    : checkAnswer(q, s.draft);
+    : checkAnswer(q, c.draft);
   if (!result) { document.querySelector('#notice').textContent = 'Enter an answer first.'; return; }
-  const a = {id: `${s.id}:${s.index}`, question: q, answer: skipped ? '' : s.draft, result, skipped, hinted: s.hint, at: new Date().toISOString()};
-  s.answers[s.index] = a;
-  state.attempts.push(a);
+  const entry = {questionId: q.id, family: q.family, answer: skipped ? '' : c.draft, result, skipped, hinted: c.hint, choiceOrder: c.choiceOrder, at: new Date().toISOString()};
+  c.entry = entry;
+  const repeat = !!progress.families[q.family];
+  recordResult(progress, q, !skipped && isRight(result));
+  progress.history.push(entry);
+  if (progress.history.length > 500) progress.history.splice(0, progress.history.length - 500);
   save();
   logEvent('answer', {
-    quizId: s.id, questionId: q.id, family: q.family, type: q.type, difficulty: q.difficulty,
-    answer: skipped ? '' : q.type === 'mc' ? q.choices.find(c => c.id === s.draft)?.text : s.draft,
-    earned: result.earned, possible: result.possible, skipped, hinted: s.hint, seconds: timerSeconds(), bankVersion: version,
+    quizId: 'practice', questionId: q.id, family: q.family, type: q.type, difficulty: q.difficulty,
+    answer: skipped ? '' : q.type === 'mc' ? q.choices.find(x => x.id === c.draft)?.text : c.draft,
+    earned: result.earned, possible: result.possible, skipped, hinted: c.hint, seconds: timerSeconds(),
+    questionCount: progress.count, retry: repeat, bankVersion: version,
   });
   render();
   document.querySelector('#next')?.focus({preventScroll: true});
@@ -256,37 +258,30 @@ function record(skipped = false) {
 }
 
 function next() {
-  const s = state.quiz;
-  s.index++; s.draft = ''; s.hint = false;
-  save();
-  if (quizDone()) {
-    const all = entries();
-    logEvent('finish', {quizId: s.id, questionCount: s.questions.length, earned: all.reduce((n, a) => n + a.result.earned, 0), possible: all.reduce((n, a) => n + a.result.possible, 0), bankVersion: version});
-    go('results');
-  } else {
-    render();
-    window.scrollTo({top: 0});
-    if (finePointer) document.querySelector('#answer, .choice input')?.focus({preventScroll: true});
-  }
+  progress.current = null;
+  ensureCurrent();
+  render();
+  window.scrollTo({top: 0});
+  if (finePointer) document.querySelector('#answer, .choice input')?.focus({preventScroll: true});
 }
 
 function render() {
-  const route = location.hash.slice(1) || 'home';
-  if (route === 'quiz' && state.quiz && !quizDone() && !state.quiz.answers[state.quiz.index]) {
-    const key = `${state.quiz.id}:${state.quiz.index}`;
+  const r = route();
+  const page = r === 'practice' ? practicePage() : r === 'wrong' ? wrongPage() : home();
+  if (r === 'practice' && !progress.current.entry) {
+    const key = `${progress.current.questionId}:${progress.count}`;
     if (shown.key !== key) shown = {key, ms: 0, at: Date.now()};
     else if (shown.at === null && document.visibilityState === 'visible') shown.at = Date.now();
   } else pauseTimer();
-  const page = route === 'quiz' ? quizPage() : route === 'wrong' ? wrongPage() : route === 'results' && state.quiz && quizDone() ? results() : home();
   main.innerHTML = (storageOk ? '' : '<p class="warning">This browser isn’t saving progress. A refresh will lose your answers.</p>') + page;
-  const n = wrongAnswers(entries()).length;
+  const n = currentMisses().length;
   document.querySelector('#wrong-count').textContent = n ? ` (${n})` : '';
 }
 
 main.addEventListener('submit', ev => { ev.preventDefault(); if (ev.target.id === 'answer-form') record(); });
 main.addEventListener('input', ev => {
-  if (!ev.target.closest('#answer-form') || !state.quiz || state.quiz.answers[state.quiz.index]) return;
-  state.quiz.draft = ev.target.value;
+  if (!ev.target.closest('#answer-form') || !progress.current || progress.current.entry) return;
+  progress.current.draft = ev.target.value;
   save();
   document.querySelector('#check').disabled = !ev.target.value.trim();
 });
@@ -294,26 +289,22 @@ main.addEventListener('click', ev => {
   const b = ev.target.closest('button');
   if (!b) return;
   switch (b.dataset.action) {
-    case 'start': if (state.quiz && !quizDone()) go('quiz'); else start(); break;
-    case 'ask-new': case 'ask-retry': document.querySelector('#confirm').hidden = false; break;
+    case 'practice': go('practice'); break;
+    case 'ask-reset': document.querySelector('#confirm').hidden = false; break;
     case 'cancel': document.querySelector('#confirm').hidden = true; break;
-    case 'new': start(); break;
-    case 'hint': state.quiz.hint = true; save(); render(); break;
+    case 'reset': progress = emptyProgress(); save(); render(); break;
+    case 'hint': progress.current.hint = true; save(); render(); break;
     case 'skip': record(true); break;
     case 'next': next(); break;
-    case 'retry': { const qs = wrongAnswers(entries()).map(a => a.question); if (qs.length) start(qs); break; }
   }
 });
 
 // Keyboard: A–D picks a choice, Ctrl/⌘+Enter checks a typed answer.
 document.addEventListener('keydown', ev => {
-  if ((location.hash.slice(1) || 'home') !== 'quiz' || !state.quiz || quizDone()) return;
-  const s = state.quiz, q = s.questions[s.index];
-  if (s.answers[s.index]) return;
+  if (route() !== 'practice' || !progress.current || progress.current.entry) return;
   if (ev.key === 'Enter' && (ev.metaKey || ev.ctrlKey) && ev.target.id === 'answer') { ev.preventDefault(); record(); return; }
-  if (q.type !== 'mc' || ev.target.tagName === 'TEXTAREA' || ev.metaKey || ev.ctrlKey || ev.altKey) return;
-  const i = 'abcd'.indexOf(ev.key.toLowerCase());
-  const radio = document.querySelectorAll('.choice input')[i];
+  if (currentQuestion().type !== 'mc' || ev.target.tagName === 'TEXTAREA' || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+  const radio = document.querySelectorAll('.choice input')['abcd'.indexOf(ev.key.toLowerCase())];
   if (radio) { radio.checked = true; radio.focus(); radio.dispatchEvent(new Event('input', {bubbles: true})); }
 });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') pauseTimer(); else render(); });
