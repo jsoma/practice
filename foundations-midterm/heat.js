@@ -165,7 +165,11 @@ export function createHeat() {
     if (!raf) { last = 0; raf = requestAnimationFrame(tick); }
   }
 
-  addEventListener('resize', () => { if (horizontal !== narrow()) { layout(); start(); } });
+  addEventListener('resize', () => {
+    if (horizontal === narrow()) return;
+    if (el.isConnected) { const slot = document.createElement('span'); (narrow() ? document.querySelector('.quiz-top a') : el)?.before(slot); if (narrow()) { slot.replaceWith(el); } else { slot.remove(); document.body.append(el); } }
+    layout(); start();
+  });
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && el.isConnected) start(); });
 
   return {
@@ -173,7 +177,8 @@ export function createHeat() {
     // Put the meter into the page. It keeps its displayed level between
     // questions, so a new level animates from wherever it was.
     mount(slot, level, hasShield = false) {
-      slot.replaceWith(el);
+      // On wide screens the meter sits beside the question, fixed to the window.
+      if (narrow()) slot.replaceWith(el); else { slot.remove(); document.body.append(el); }
       if (shown === null) shown = level;
       target = level;
       shield.hidden = !hasShield;

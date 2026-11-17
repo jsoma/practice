@@ -375,6 +375,7 @@ function render() {
   main.innerHTML = (storageOk ? '' : '<p class="warning">This browser isn’t saving progress. A refresh will lose your answers.</p>') + page;
   const slot = document.querySelector('.heat-slot');
   if (slot) heat.mount(slot, progress.heat ?? 0, !!progress.shield);
+  else heat.el.remove();
   const n = currentMisses().length;
   document.querySelector('#wrong-count').textContent = n ? ` (${n})` : '';
 }
