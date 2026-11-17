@@ -11,14 +11,9 @@ Progress is saved in the browser. The home page shows one bar segment per topic,
 
 ## Questions
 
-New questions go in `variants.js`. The older ones are in `bank.js` and `code-questions.js`, and `questions.js` combines everything. There are four kinds:
+Questions live in `questions/`, one file per area: structures, logic, tools, APIs, pandas, concepts and stories. `questions/README.md` describes the format. `questions.js` loads them all.
 
-- **mc**: four choices, with the first one correct. Choices are shuffled when shown.
-- **code**: the student writes code. It's compared to the `accepted` list after removing spaces and normalizing quotes, and it isn't run, so other working code can be marked wrong.
-- **output**: the student types what the code prints.
-- **short**: a short explanation, checked for keywords. Each group of keywords is worth a point. This is a rough check and the page says so.
-
-Adding a question to an existing family gives that topic more variety. A new family is a new topic.
+Code answers are compared to a list of accepted answers rather than run, and short answers are checked for keywords. Both can miss a right answer, so students can mark those "I got this right," which counts it as right for scheduling.
 
 ## Answer logging
 
@@ -34,4 +29,4 @@ Setting up a new sheet:
 
 Apps Script deployments are tied to a saved version. If you change the script, edit the deployment and pick "New version", or the URL keeps running the old code.
 
-To analyze, use File → Download → CSV from the sheet. Each answer is a row in the `events` tab, with the question, what the student typed, the score, and seconds spent on it. `retry` is TRUE when the student had seen that topic before, and `question_count` is how many questions they'd answered at that point.
+To analyze, use File → Download → CSV from the sheet. Each answer is a row in the `events` tab, with the question, what the student typed, the score, and seconds spent on it. `retry` is TRUE when the student had seen that topic before, and `question_count` is how many questions they'd answered at that point. An `override` row means the student marked that answer right themselves.

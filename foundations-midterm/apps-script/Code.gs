@@ -3,7 +3,7 @@
 const COLUMNS = ['received_at', 'client_time', 'browser_id', 'session_id', 'event', 'quiz_id',
   'retry', 'question_id', 'family', 'type', 'difficulty', 'answer', 'earned', 'possible', 'skipped',
   'hinted', 'seconds', 'question_count', 'bank_version'];
-const EVENTS = ['visit', 'start', 'answer', 'finish', 'active'];
+const EVENTS = ['visit', 'start', 'answer', 'override', 'finish', 'active'];
 
 // A leading apostrophe stores text exactly as typed: no formulas, dates or dropped zeros.
 const asText = v => (typeof v === 'string' ? "'" + v : v);

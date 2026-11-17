@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {bank} from '../questions.js';
+import {bank} from "../questions.js";
 import {emptyProgress, familiesOf, recordResult, pickNext, summary, RELEARN_AFTER} from '../practice.js';
 
 const DAY = 864e5;

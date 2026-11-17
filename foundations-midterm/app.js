@@ -1,14 +1,15 @@
-import {BANK_VERSION} from './bank.js';
-import {bank} from './questions.js';
+import {bank, BANK_VERSION} from './questions.js';
 import {LOG_URL} from './config.js';
 import {logEvent} from './log.js';
 import {normalize, shuffle} from './core.js';
 import {checkAnswer} from './quiz.js';
+import {burst, cannons, shake, clearConfetti} from './fx.js';
+import {SCENES, initScene, setScene} from './scene.js';
 import {emptyProgress, familiesOf, recordResult, pickNext, summary} from './practice.js';
 
 const main = document.querySelector('main');
 const version = `${BANK_VERSION}-practice-v1`;
-const STORAGE_KEY = 'foundations-practice-v1';
+const STORAGE_KEY = 'foundations-practice-v2';
 const finePointer = matchMedia('(pointer: fine)').matches;
 const byId = new Map(bank.map(q => [q.id, q]));
 const familyNames = [...familiesOf(bank).keys()];
@@ -54,6 +55,7 @@ const timerSeconds = () => Math.round((shown.ms + (shown.at !== null ? Date.now(
 const isRight = result => result.earned === result.possible;
 function outcome(entry) {
   if (entry.skipped) return 'skipped';
+  if (entry.markedRight) return 'right';
   if (isRight(entry.result)) return 'right';
   return entry.result.earned > 0 ? 'partial' : 'wrong';
 }
@@ -94,13 +96,15 @@ function highlight(text, terms) {
 function strip(currentFamily = null) {
   return `<div class="strip" aria-hidden="true">${familyNames.map(name => {
     const f = progress.families[name];
-    return `<span class="${f ? f.last : 'todo'}${name === currentFamily ? ' current' : ''}"></span>`;
+    const popped = name === currentFamily && progress.current?.entry && f?.last === 'right';
+    return `<span class="${f ? f.last : 'todo'}${name === currentFamily ? ' current' : ''}${popped ? ' pop' : ''}"></span>`;
   }).join('')}</div>`;
 }
 
 function statusLine() {
   const s = summary(progress, bank);
-  return `${s.seen} of ${s.total} topics seen, ${s.right} right.`;
+  const best = (progress.best ?? 0) >= 3 ? ` Best streak: ${progress.best}.` : '';
+  return `${s.seen} of ${s.total} topics seen, ${s.right} right.${best}`;
 }
 
 function context(q) {
@@ -128,12 +132,15 @@ function reference(q) {
   return `${block}<p>${rich(q.explanation)}</p>`;
 }
 
+const CHEERS = ['Correct', 'Yes', 'Exactly', 'Nailed it', 'That’s it', 'Right'];
 function verdict(q, e) {
   if (e.skipped) return 'Skipped';
+  if (e.markedRight) return 'Marked right';
+  if (e.comeback && isRight(e.result)) return 'Got it this time';
   const {earned, possible} = e.result;
-  if (q.type === 'short') return `Keywords found: ${earned} of ${possible}`;
-  if (q.type === 'code') return earned ? 'Matches a listed answer' : 'Doesn’t match a listed answer';
-  return earned ? 'Correct' : 'Incorrect';
+  if (earned === possible) return CHEERS[Number(e.at.slice(-3, -1)) % CHEERS.length] ?? 'Correct';
+  if (q.type === 'short' && earned) return `Close: found ${earned} of ${possible} keywords`;
+  return 'Not quite';
 }
 
 function home() {
@@ -172,15 +179,19 @@ function feedback(q, e) {
        <p class="small muted">Keyword match only.</p>`
     : '';
   const codeNote = q.type === 'code' && !e.skipped && !e.result.earned ? '<p class="small muted">Other code may also work.</p>' : '';
+  const canMark = !e.skipped && !e.markedRight && !isRight(e.result) && q.type !== 'mc' && e === progress.current?.entry;
   return `<section class="feedback ${outcome(e)}">
     <h2 class="verdict" tabindex="-1">${verdict(q, e)}</h2>
-    ${groups}${codeNote}
+    ${e.milestone ? `<p class="milestone">${esc(e.milestone)}</p>` : ''}
+    ${outcome(e) === 'wrong' || outcome(e) === 'partial' ? '<p class="small muted">This one comes back in a few questions.</p>' : ''}
+    ${e.markedRight ? '' : groups + codeNote}
     ${q.type === 'mc' ? `<p class="explain">${rich(q.explanation)}</p>` : `<div class="compare">
       <div><h3>Your answer</h3>${answerText(q, e)}</div>
       <div><h3>Answer</h3>${reference(q)}</div>
     </div>`}
     <div class="actions">
       <button class="primary" data-action="next" id="next">Next question</button>
+      ${canMark ? '<button data-action="mark-right">I got this right</button>' : ''}
     </div>
   </section>`;
 }
@@ -191,7 +202,7 @@ function practicePage() {
   const input = q.type === 'mc' ? choices(q, e, c.draft)
     : e ? '' : `<label class="sr" for="answer">Your answer</label><textarea id="answer" name="answer" class="${q.type === 'short' ? 'prose' : 'code'}" maxlength="4000" spellcheck="${q.type === 'short'}" autocapitalize="off" aria-keyshortcuts="Control+Enter Meta+Enter">${esc(c.draft)}</textarea>`;
   return `<div class="quiz-top">
-      <span>${progress.count} answered</span>
+      <span>${progress.count} answered${(progress.streak ?? 0) >= 2 ? ` <span class="streak">${progress.streak} in a row</span>` : ''}</span>
       <a href="#home">Done for now</a>
     </div>
     ${strip(q.family)}
@@ -248,7 +259,14 @@ function record(skipped = false) {
   const entry = {questionId: q.id, family: q.family, answer: skipped ? '' : c.draft, result, skipped, hinted: c.hint, choiceOrder: c.choiceOrder, at: new Date().toISOString()};
   c.entry = entry;
   const repeat = !!progress.families[q.family];
-  recordResult(progress, q, !skipped && isRight(result));
+  const right = !skipped && isRight(result);
+  entry.comeback = progress.families[q.family]?.last === 'wrong';
+  const seenBefore = summary(progress, bank).seen;
+  // Saved so "I got this right" can redo the scheduling.
+  c.before = {family: progress.families[q.family] ? structuredClone(progress.families[q.family]) : null, count: progress.count};
+  recordResult(progress, q, right);
+  c.before.streak = progress.streak ?? 0;
+  updateStreak(entry, right, seenBefore);
   progress.history.push(entry);
   if (progress.history.length > 500) progress.history.splice(0, progress.history.length - 500);
   save();
@@ -260,11 +278,62 @@ function record(skipped = false) {
   });
   render();
   announce(verdict(q, entry));
+  celebrate(entry);
   document.querySelector('#next')?.focus({preventScroll: true});
   document.querySelector('.feedback')?.scrollIntoView({block: 'nearest', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'});
 }
 
+const MILESTONES = [10, 25, 50, 100, 150, 200, 300, 500];
+
+function updateStreak(entry, right, seenBefore) {
+  progress.streak = right ? (progress.streak ?? 0) + 1 : 0;
+  progress.best = Math.max(progress.best ?? 0, progress.streak);
+  entry.streak = progress.streak;
+  const s = summary(progress, bank);
+  if (s.seen === s.total && seenBefore < s.total) entry.milestone = 'You’ve now seen every topic.';
+  else if (MILESTONES.includes(progress.count)) entry.milestone = `That’s ${progress.count} answered.`;
+  else if (right && progress.streak >= 5 && progress.streak % 5 === 0) entry.milestone = `${progress.streak} in a row.`;
+}
+
+// Confetti for right answers, more for comebacks and milestones, a small shake for misses.
+function celebrate(entry) {
+  const kind = outcome(entry);
+  const card = document.querySelector('.card');
+  if (kind === 'right') {
+    card?.classList.add('glow');
+    const big = entry.comeback || entry.streak >= 5;
+    burst(document.querySelector('.verdict'), big ? 1.4 : 1);
+  } else if (kind === 'wrong' || kind === 'partial') {
+    clearConfetti();
+    shake(document.querySelector('.choice.is-wrong') ?? document.querySelector('.compare > div:first-child > :not(h3)'));
+  }
+  if (entry.milestone && (entry.milestone.includes('every topic') || entry.streak >= 10 || MILESTONES.includes(progress.count) && progress.count >= 50)) cannons(entry.milestone.includes('every topic') ? 2 : 1);
+  else if (entry.milestone) burst(document.querySelector('.milestone'), 1.4);
+}
+
 const announce = text => { const el = document.querySelector('#status'); el.textContent = ''; setTimeout(() => { el.textContent = text; }, 50); };
+
+// The student says their answer was right even though the checker didn't match it.
+function markRight() {
+  const c = progress.current, q = currentQuestion(), e = c.entry;
+  if (!e || e.markedRight || !c.before) return;
+  if (c.before.family) progress.families[q.family] = c.before.family; else delete progress.families[q.family];
+  progress.count = c.before.count;
+  progress.streak = c.before.streak ?? 0;
+  recordResult(progress, q, true);
+  e.markedRight = true;
+  updateStreak(e, true, Infinity);
+  // History holds its own copy after a reload, so mark that one too.
+  const h = progress.history.findLast(x => x.at === e.at && x.questionId === e.questionId);
+  if (h) h.markedRight = true;
+  save();
+  logEvent('override', {quizId: 'practice', questionId: q.id, family: q.family, type: q.type, difficulty: q.difficulty, questionCount: progress.count, bankVersion: version});
+  render();
+  announce('Marked right');
+  document.querySelector('.card')?.classList.add('glow');
+  burst(document.querySelector('.verdict'), 0.7);
+  document.querySelector('#next')?.focus({preventScroll: true});
+}
 
 function next() {
   progress.current = null;
@@ -307,6 +376,7 @@ main.addEventListener('click', ev => {
     case 'hint': progress.current.hint = true; save(); render(); document.querySelector('#hint').focus(); break;
     case 'skip': record(true); break;
     case 'next': next(); break;
+    case 'mark-right': markRight(); break;
   }
 });
 
@@ -328,5 +398,9 @@ window.addEventListener('hashchange', () => {
   render(); window.scrollTo({top: 0}); main.focus({preventScroll: true});
 });
 document.querySelector('.skip').addEventListener('click', ev => { ev.preventDefault(); (document.querySelector('#stem') ?? main).focus(); });
+// Background scene picker.
+document.querySelector('.scenes').innerHTML = SCENES.map(sc => `<button type="button" data-scene="${sc.id}" aria-pressed="false">${sc.name}</button>`).join('');
+document.querySelector('.scenes').addEventListener('click', ev => { const b = ev.target.closest('[data-scene]'); if (b) setScene(b.dataset.scene); });
+initScene();
 render();
 logEvent('visit', {bankVersion: version});
