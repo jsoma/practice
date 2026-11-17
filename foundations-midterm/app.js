@@ -3,7 +3,7 @@ import {bank} from './questions.js';
 import {LOG_URL} from './config.js';
 import {logEvent} from './log.js';
 import {normalize} from './core.js';
-import {checkAnswer, buildQuiz, wrongAnswers, loadQuizState, saveQuizState} from './quiz.js';
+import {checkAnswer, buildQuiz, shuffleQuiz, wrongAnswers, loadQuizState, saveQuizState} from './quiz.js';
 
 const main = document.querySelector('main');
 const version = `${BANK_VERSION}-plain-quiz-v5`;
@@ -228,7 +228,7 @@ function wrongPage() {
 
 function start(questions = null) {
   const retry = !!questions;
-  state.quiz = {id: crypto.randomUUID(), bankVersion: version, questions: questions ?? buildQuiz(bank), answers: [], index: 0, draft: '', hint: false};
+  state.quiz = {id: crypto.randomUUID(), bankVersion: version, questions: questions ? shuffleQuiz(questions) : buildQuiz(bank), answers: [], index: 0, draft: '', hint: false};
   save();
   logEvent('start', {quizId: state.quiz.id, retry, questionCount: state.quiz.questions.length, bankVersion: version});
   go('quiz');

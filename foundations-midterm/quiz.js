@@ -25,10 +25,10 @@ export function buildQuiz(bank,seed=Date.now()){
  const rng=seededRandom(seed),groups=new Map();
  for(const q of bank){const key=q.family??q.id;if(!groups.has(key))groups.set(key,[]);groups.get(key).push(q);}
  const selected=[...groups.values()].map(group=>group[Math.floor(rng()*group.length)]);
- const first=selected.find(q=>q.id==='code-list-last');
- const rest=shuffle(selected.filter(q=>q!==first),rng).map(q=>({...q,choices:q.choices?shuffle(q.choices,rng):undefined}));
- return first?[first,...rest]:rest;
+ return shuffleQuiz(selected,rng);
 }
+// Shuffles question order and multiple-choice options.
+export function shuffleQuiz(questions,rng=Math.random){return shuffle(questions,rng).map(q=>({...q,choices:q.choices?shuffle(q.choices,rng):undefined}));}
 export function wrongAnswers(entries){return entries.filter(a=>a.skipped||a.result.earned<a.result.possible);}
 export function loadQuizState(storage){
  const empty={version:3,quiz:null,attempts:[]};

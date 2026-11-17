@@ -23,10 +23,10 @@ test('every code question has correct listed forms; assignment inside print is n
  const assignment=codeQuestions.find(q=>q.id==='code-convert');
  assert.equal(checkAnswer(assignment,'print(age=int(age))').earned,0);
 });
-test('Start covers every family once, without filtering, and opens with the requested short answer',()=>{
+test('Start covers every family once',()=>{
  const expected=new Set(bank.map(q=>q.family??q.id));
  for(let seed=1;seed<=20;seed++){
-  const qs=buildQuiz(bank,seed);assert.equal(qs.length,expected.size);assert.equal(qs[0].id,'code-list-last');
+  const qs=buildQuiz(bank,seed);assert.equal(qs.length,expected.size);
   assert.equal(new Set(qs.map(q=>q.family??q.id)).size,qs.length);
   assert.deepEqual(new Set(qs.map(q=>q.family??q.id)),expected);
  }

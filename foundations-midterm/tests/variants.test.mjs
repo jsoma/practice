@@ -17,8 +17,8 @@ test('every variant is well formed and its own reference answer scores fully',()
   else {const r=checkAnswer(q,q.explanation);assert.equal(r.earned,r.possible,`${q.id}: ${JSON.stringify(r.matches)}`);}
  }
 });
-test('the opening question stays first and families stay one-per-quiz',()=>{
- for(let seed=1;seed<=20;seed++){const qs=buildQuiz(bank,seed);assert.equal(qs[0].id,'code-list-last');assert.equal(new Set(qs.map(q=>q.family)).size,qs.length);}
+test('families stay one per quiz',()=>{
+ for(let seed=1;seed<=20;seed++){const qs=buildQuiz(bank,seed);assert.equal(new Set(qs.map(q=>q.family)).size,qs.length);}
 });
 test('typed output ignores surrounding quotes but not wrong values',()=>{
  const q=variants.find(q=>q.output&&q.accepted[0]==='34');
@@ -36,4 +36,7 @@ test('log events carry an anonymous id and send nothing without a URL',async()=>
  const real=globalThis.fetch;let called=false;globalThis.fetch=()=>{called=true;return Promise.resolve();};
  try{logEvent('visit',{},'');}finally{globalThis.fetch=real;}
  assert.equal(called,false);
+});
+test('quizzes start with different questions',()=>{
+ assert.ok(new Set([1,2,3,4,5,6,7,8].map(seed=>buildQuiz(bank,seed)[0].id)).size>1);
 });
