@@ -28,7 +28,7 @@ export function createHeat() {
   // Size the canvas and redraw the parts that don't move.
   function layout() {
     horizontal = narrow();
-    const cssW = horizontal ? 124 : 84, cssH = horizontal ? 42 : 300;
+    const cssW = horizontal ? 108 : 84, cssH = horizontal ? 42 : 254;
     const dpr = Math.min(devicePixelRatio || 1, 2);
     canvas.width = cssW * dpr; canvas.height = cssH * dpr;
     canvas.style.width = cssW + 'px'; canvas.style.height = cssH + 'px';
@@ -42,7 +42,7 @@ export function createHeat() {
   // Tube geometry, in vertical coordinates.
   const geo = () => {
     const cx = w / 2, tw = horizontal ? 14 : 22;
-    const top = horizontal ? 26 : 74, bulbR = horizontal ? 11 : 20, bulbY = h - bulbR - (horizontal ? 3 : 8);
+    const top = horizontal ? 10 : 28, bulbR = horizontal ? 11 : 20, bulbY = h - bulbR - (horizontal ? 3 : 8);
     return {cx, tw, top, bulbR, bulbY, bottom: bulbY - bulbR * 0.6};
   };
 
@@ -95,14 +95,6 @@ export function createHeat() {
     ctx.translate(shake, 0);
 
     const surface = bulbY - (bulbY - top) * lv;
-    // Glow behind everything, stronger as it fills.
-    if (lv > 0) {
-      const gy = Math.max(top, surface), gr = 18 + 46 * lv;
-      const g = ctx.createRadialGradient(cx, gy, 2, cx, gy, gr);
-      g.addColorStop(0, `rgba(255,150,60,${0.15 + 0.4 * lv})`); g.addColorStop(1, 'rgba(255,150,60,0)');
-      ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
-    }
-
     ctx.drawImage(texture, 0, 0, w, h);
 
     // The fire inside the tube.
@@ -142,23 +134,8 @@ export function createHeat() {
     ctx.strokeStyle = 'rgba(42,47,69,0.45)'; ctx.lineWidth = 1.2;
     for (let i = 1; i < MAX; i++) { const y = bulbY - ((bulbY - top) * i) / MAX; ctx.beginPath(); ctx.moveTo(cx + tw / 2 + 2, y); ctx.lineTo(cx + tw / 2 + (i % 5 ? 5 : 8), y); ctx.stroke(); }
 
-    // The flame growing out of the top from 5 up.
-    const flameLv = Math.max(0, (shown - 4.5) / 5.5);
-    if (flameLv > 0) {
-      const base = top + 2, fh = (horizontal ? 10 : 18) + (horizontal ? 16 : 46) * flameLv;
-      const sway = Math.sin(t * 3.1) * 3 * flameLv + Math.sin(t * 7.3) * 1.2;
-      for (const [scale, color, alpha] of [[1, [222, 64, 44], 0.9], [0.75, [255, 138, 58], 0.95], [0.45, [255, 224, 110], 1]]) {
-        const fw = (tw * 0.75 + 6 * flameLv) * scale, fhh = fh * scale * (1 + Math.sin(t * 9 + scale * 5) * 0.06);
-        ctx.fillStyle = rgba(color, alpha);
-        ctx.beginPath();
-        ctx.moveTo(cx - fw, base);
-        ctx.bezierCurveTo(cx - fw * 1.1, base - fhh * 0.45, cx - fw * 0.2 + sway * 0.4, base - fhh * 0.7, cx + sway, base - fhh);
-        ctx.bezierCurveTo(cx + fw * 0.3 + sway * 0.4, base - fhh * 0.6, cx + fw * 1.1, base - fhh * 0.4, cx + fw, base);
-        ctx.closePath(); ctx.fill();
-      }
-      // Embers drift off a full flame.
-      if (shown > 9.5 && Math.random() < 0.25) embers.push({x: cx + (Math.random() - 0.5) * 10, y: base - fh * 0.6, vx: (Math.random() - 0.5) * 12, vy: -20 - Math.random() * 25, life: 1});
-    }
+    // Embers drift up out of a full tube.
+    if (shown > 9.5 && Math.random() < 0.2) embers.push({x: cx + (Math.random() - 0.5) * tw * 0.6, y: top, vx: (Math.random() - 0.5) * 10, vy: -16 - Math.random() * 20, life: 1});
     for (const e of embers) {
       ctx.fillStyle = `rgba(255,${180 + 60 * e.life | 0},90,${e.life})`;
       ctx.fillRect(e.x, e.y, 2, 2);
@@ -176,6 +153,9 @@ export function createHeat() {
     for (const e of embers) { e.x += e.vx * dt; e.y += e.vy * dt; e.life -= dt * 0.9; }
     while (embers.length && embers[0].life <= 0) embers.shift();
     el.style.setProperty('--grow', String(0.82 + 0.38 * (shown / MAX)));
+    // A glow that follows the tube's shape, stronger as it fills.
+    const lv = shown / MAX;
+    canvas.style.filter = lv > 0 ? `drop-shadow(0 0 ${3 + 12 * lv}px rgba(255,140,60,${0.25 + 0.6 * lv}))` : 'none';
     draw(time);
     if (!reduceMotion() && document.visibilityState === 'visible') raf = requestAnimationFrame(tick);
   }
