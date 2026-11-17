@@ -57,3 +57,16 @@ test('the same topic is never shown twice in a row', () => {
   let last = null;
   for (let i = 0; i < 200; i++) { const q = answer(p, i % 3 === 0, now); assert.notEqual(q.family, last); last = q.family; }
 });
+
+test('new topics keep coming even when everything is wrong', () => {
+  const p = emptyProgress(), now = Date.now();
+  const firsts = [];
+  for (let i = 0; i < 60; i++) {
+    const q = pickNext(p, bank, now);
+    if (!p.families[q.family]) firsts.push(i);
+    recordResult(p, q, false, now);
+    p.history.push({family: q.family, questionId: q.id});
+  }
+  for (let i = 1; i < firsts.length; i++) assert.ok(firsts[i] - firsts[i - 1] <= 3, `gap before question ${firsts[i]}`);
+  assert.ok(firsts.length >= 20);
+});

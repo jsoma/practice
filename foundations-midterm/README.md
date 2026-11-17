@@ -5,7 +5,7 @@ Practice questions for the Foundations midterm. Questions keep coming until you 
 What comes next:
 1. A topic you missed, five questions after you missed it, as a different version if one exists.
 2. A topic you got right that's due again. Reviews come 1, 2, 4, then 8 days apart.
-3. A topic you haven't seen yet.
+3. A topic you haven't seen yet. At least one question in three is a new topic until you've seen them all.
 
 Progress is saved in the browser. The home page shows one bar segment per topic, colored by your last answer. "See wrong answers" lists the topics where your last answer was wrong. The scheduling is in `practice.js`.
 

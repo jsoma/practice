@@ -3,6 +3,8 @@
 // family further out: 1 day, 2 days, 4 days, then 8.
 
 export const RELEARN_AFTER = 5;
+// At least one question in this many is a topic you haven't seen, while any are left.
+export const NEW_EVERY = 3;
 const DAY = 24 * 60 * 60 * 1000;
 const INTERVALS = [DAY, 2 * DAY, 4 * DAY, 8 * DAY];
 
@@ -19,7 +21,7 @@ export function familiesOf(bank) {
 
 // Record an answer and reschedule its family.
 export function recordResult(progress, question, right, now = Date.now()) {
-  const f = progress.families[question.family] ??= {box: 0, seen: 0, right: 0};
+  const f = progress.families[question.family] ??= {box: 0, seen: 0, right: 0, firstCount: progress.count};
   f.seen++;
   f.last = right ? 'right' : 'wrong';
   f.lastAt = now;
@@ -38,8 +40,9 @@ export function recordResult(progress, question, right, now = Date.now()) {
   progress.count++;
 }
 
-// Choose the next question. Order: misses that are due, families due by date,
-// unseen families, then whatever is due soonest.
+// Choose the next question. Order: a new topic if none in the last few questions,
+// misses that are due, families due by date, unseen families, then whatever is
+// due soonest.
 export function pickNext(progress, bank, now = Date.now(), rng = Math.random) {
   const families = familiesOf(bank);
   const lastFamily = progress.history.at(-1)?.family;
@@ -50,8 +53,10 @@ export function pickNext(progress, bank, now = Date.now(), rng = Math.random) {
   const relearn = names.filter(n => record(n)?.dueCount != null && record(n).dueCount <= progress.count);
   const dated = names.filter(n => record(n)?.dueAt != null && record(n).dueAt <= now);
   const unseen = names.filter(n => !record(n));
+  const lastNew = Math.max(-1, ...Object.values(progress.families).map(f => f.firstCount ?? -1));
   let name;
-  if (relearn.length) name = relearn.sort((a, b) => record(a).dueCount - record(b).dueCount)[0];
+  if (unseen.length && progress.count - lastNew >= NEW_EVERY) name = random(unseen);
+  else if (relearn.length) name = relearn.sort((a, b) => record(a).dueCount - record(b).dueCount)[0];
   else if (dated.length) name = random(dated);
   else if (unseen.length) name = random(unseen);
   else {
