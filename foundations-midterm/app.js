@@ -102,8 +102,8 @@ function strip(currentFamily = null) {
 
 function statusLine() {
   const s = summary(progress, bank);
-  const best = (progress.best ?? 0) >= 3 ? ` Best streak: ${progress.best}.` : '';
-  return `${s.seen} of ${s.total} topics seen, ${s.right} right.${best}`;
+  const fires = progress.fires ? ` On fire ${progress.fires === 1 ? 'once' : `${progress.fires} times`}.` : '';
+  return `${s.seen} of ${s.total} topics seen, ${s.right} right.${fires}`;
 }
 
 function context(q) {
@@ -200,7 +200,8 @@ function practicePage() {
   const input = q.type === 'mc' ? choices(q, e, c.draft)
     : e ? '' : `<label class="sr" for="answer">Your answer</label><textarea id="answer" name="answer" class="${q.type === 'short' ? 'prose' : 'code'}" maxlength="4000" spellcheck="${q.type === 'short'}" autocapitalize="off" aria-keyshortcuts="Control+Enter Meta+Enter">${esc(c.draft)}</textarea>`;
   return `<div class="quiz-top">
-      <span>${progress.count} answered${(progress.streak ?? 0) >= 2 ? ` <span class="streak">${progress.streak} in a row</span>` : ''}</span>
+      <span>${progress.count} answered</span>
+      ${heatMeter(heatFrom ?? progress.heat ?? 0)}
       <a href="#home">Done for now</a>
     </div>
     ${strip(q.family)}
@@ -263,8 +264,9 @@ function record(skipped = false) {
   // Saved so "I got this right" can redo the scheduling.
   c.before = {family: progress.families[q.family] ? structuredClone(progress.families[q.family]) : null, count: progress.count};
   recordResult(progress, q, right);
-  c.before.streak = progress.streak ?? 0;
-  updateStreak(entry, right, seenBefore);
+  c.before.heat = progress.heat ?? 0;
+  heatFrom = c.before.heat;
+  updateHeat(entry, seenBefore);
   progress.history.push(entry);
   if (progress.history.length > 500) progress.history.splice(0, progress.history.length - 500);
   save();
@@ -283,14 +285,44 @@ function record(skipped = false) {
 
 const MILESTONES = [10, 25, 50, 100, 150, 200, 300, 500];
 
-function updateStreak(entry, right, seenBefore) {
-  progress.streak = right ? (progress.streak ?? 0) + 1 : 0;
-  progress.best = Math.max(progress.best ?? 0, progress.streak);
-  entry.streak = progress.streak;
+// Heat goes up with right answers (more for comebacks) and down a little with misses.
+// It tops out at 10, which is "on fire", and never resets.
+const HEAT_MAX = 10;
+let heatFrom = null;
+function updateHeat(entry, seenBefore) {
+  const kind = outcome(entry), before = progress.heat ?? 0;
+  const delta = kind === 'right' ? (entry.comeback ? 2 : 1) : kind === 'skipped' ? -1 : -2;
+  progress.heat = Math.max(0, Math.min(HEAT_MAX, before + delta));
+  entry.heat = progress.heat;
+  entry.onFire = progress.heat === HEAT_MAX && before < HEAT_MAX;
+  if (entry.onFire) progress.fires = (progress.fires ?? 0) + 1;
   const s = summary(progress, bank);
-  if (s.seen === s.total && seenBefore < s.total) entry.milestone = 'You’ve now seen every topic.';
+  if (entry.onFire) entry.milestone = 'You’re on fire.';
+  else if (s.seen === s.total && seenBefore < s.total) entry.milestone = 'You’ve now seen every topic.';
   else if (MILESTONES.includes(progress.count)) entry.milestone = `That’s ${progress.count} answered.`;
-  else if (right && progress.streak >= 5 && progress.streak % 5 === 0) entry.milestone = `${progress.streak} in a row.`;
+}
+
+const FLAME = '<svg class="flame" viewBox="0 0 40 60" aria-hidden="true"><path class="outer" d="M20 2C26 16 38 24 36 40C34 54 26 58 20 58C14 58 6 54 4 40C2 28 14 20 20 2Z"/><path class="inner" d="M20 22C24 30 30 36 28 46C27 53 23 56 20 56C17 56 13 53 12 46C10 38 17 32 20 22Z"/></svg>';
+function heatMeter(level) {
+  const flame = level < 5 ? 0 : 0.35 + ((level - 5) / 5) * 0.65;
+  return `<div class="heat${level >= HEAT_MAX ? ' full' : ''}" role="img" aria-label="Heat ${level} of ${HEAT_MAX}" style="--level:${level / HEAT_MAX};--flame:${flame}">
+    ${FLAME}<div class="tube"><div class="fill"></div></div><div class="bulb"></div>
+  </div>`;
+}
+
+// Slide the meter from where it was to where it is now.
+function animateHeat(entry) {
+  const meter = document.querySelector('.heat');
+  heatFrom = null;
+  if (!meter) return;
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    const level = progress.heat ?? 0;
+    meter.style.setProperty('--level', level / HEAT_MAX);
+    meter.style.setProperty('--flame', level < 5 ? 0 : 0.35 + ((level - 5) / 5) * 0.65);
+    meter.classList.toggle('full', level >= HEAT_MAX);
+    meter.setAttribute('aria-label', `Heat ${level} of ${HEAT_MAX}`);
+    if (outcome(entry) === 'wrong' || outcome(entry) === 'partial') shake(meter);
+  }));
 }
 
 // Confetti for right answers, more for comebacks and milestones, a small shake for misses.
@@ -299,13 +331,16 @@ function celebrate(entry) {
   const card = document.querySelector('.card');
   if (kind === 'right') {
     card?.classList.add('glow');
-    const big = entry.comeback || entry.streak >= 5;
+    const big = entry.comeback || entry.heat >= HEAT_MAX;
     burst(document.querySelector('.verdict'), big ? 1.4 : 1);
+    if (entry.heat >= HEAT_MAX) burst(document.querySelector('.heat .flame'), 0.6);
   } else if (kind === 'wrong' || kind === 'partial') {
     clearConfetti();
     shake(document.querySelector('.choice.is-wrong') ?? document.querySelector('.compare > div:first-child > :not(h3)'));
   }
-  if (entry.milestone && (entry.milestone.includes('every topic') || entry.streak >= 10 || MILESTONES.includes(progress.count) && progress.count >= 50)) cannons(entry.milestone.includes('every topic') ? 2 : 1);
+  animateHeat(entry);
+  if (entry.onFire || entry.milestone?.includes('every topic')) cannons(entry.milestone.includes('every topic') ? 2 : 1);
+  else if (entry.milestone && progress.count >= 50) cannons(1);
   else if (entry.milestone) burst(document.querySelector('.milestone'), 1.4);
 }
 
@@ -317,10 +352,11 @@ function markRight() {
   if (!e || e.markedRight || !c.before) return;
   if (c.before.family) progress.families[q.family] = c.before.family; else delete progress.families[q.family];
   progress.count = c.before.count;
-  progress.streak = c.before.streak ?? 0;
+  progress.heat = c.before.heat ?? 0;
+  if (e.onFire) progress.fires = Math.max(0, (progress.fires ?? 1) - 1);
   recordResult(progress, q, true);
   e.markedRight = true;
-  updateStreak(e, true, Infinity);
+  updateHeat(e, Infinity);
   e.milestone = null;
   // History holds its own copy after a reload, so mark that one too.
   const h = progress.history.findLast(x => x.at === e.at && x.questionId === e.questionId);
