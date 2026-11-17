@@ -100,7 +100,6 @@ function strip(currentFamily = null) {
 
 function statusLine() {
   const s = summary(progress, bank);
-  if (!s.seen) return `${bank.length} questions on ${s.total} topics.`;
   return `${s.seen} of ${s.total} topics seen, ${s.right} right.`;
 }
 
@@ -141,7 +140,7 @@ function home() {
   const started = progress.count > 0;
   return `<section class="home">
     <h1>Foundations midterm practice</h1>
-    <p class="lede">${statusLine()}</p>
+    ${started ? `<p class="lede">${statusLine()}</p>` : ''}
     ${started ? strip() : ''}
     <div class="actions">
       <button class="primary" data-action="practice">${started ? 'Keep practicing' : 'Start practicing'}</button>
