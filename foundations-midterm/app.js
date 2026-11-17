@@ -100,7 +100,7 @@ function strip(currentFamily = null) {
 
 function statusLine() {
   const s = summary(progress, bank);
-  if (!s.seen) return `Questions on ${s.total} topics.`;
+  if (!s.seen) return `${bank.length} questions on ${s.total} topics.`;
   return `${s.seen} of ${s.total} topics seen, ${s.right} right.`;
 }
 
